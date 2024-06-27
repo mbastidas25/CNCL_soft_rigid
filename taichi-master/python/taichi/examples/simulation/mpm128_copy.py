@@ -2,7 +2,7 @@ import taichi as ti
 
 ti.init(arch=ti.gpu)  # Try to run on GPU
 
-quality = 1  # Use a larger value for higher-res simulations
+quality = 3  # Use a larger value for higher-res simulations
 n_particles, n_grid = 9000 * quality**2, 128 * quality
 dx, inv_dx = 1 / n_grid, float(n_grid)
 dt = 1e-4 / quality
@@ -38,7 +38,7 @@ def substep():
         # Hardening coefficient: snow gets harder when compressed
         h = ti.max(0.1, ti.min(5, ti.exp(10 * (1.0 - Jp[p]))))
         if material[p] == 1:  # jelly, make it softer
-            h = 0.1
+            h = 0.07
         elif material[p] == 3:  # rigid plank
             h = 1
         mu, la = mu_0 * h, lambda_0 * h
@@ -75,7 +75,7 @@ def substep():
         if grid_m[i, j] > 0:  # No need for epsilon here
             # Momentum to velocity
             grid_v[i, j] = (1 / grid_m[i, j]) * grid_v[i, j]
-            grid_v[i, j] += dt * gravity[None] * 90  # gravity
+            grid_v[i, j] += dt * gravity[None] * 30  # gravity
             dist = attractor_pos[None] - dx * ti.Vector([i, j])
             grid_v[i, j] += dist / (0.01 + dist.norm()) * attractor_strength[None] * dt * 100
             if i < 3 and grid_v[i, j][0] < 0:
@@ -104,13 +104,11 @@ def substep():
         if material[p] == 3:  # Set plank particle velocities to zero
             v[p] = ti.Vector([0.0, 0.0])
 
-
-
 @ti.kernel
 def reset():
-    n_ball_particles = n_particles // 4
+    n_ball_particles = n_particles // 7
     n_rectangle_particles = n_particles - n_ball_particles
-    n_planks = 3  # Number of planks
+    n_planks = 6  # Number of planks
     particles_per_plank = n_rectangle_particles // n_planks
 
     # Ball
@@ -124,68 +122,33 @@ def reset():
         Jp[i] = 1
         C[i] = ti.Matrix.zero(float, 2, 2)
 
-    # (Rigid Rectngles)Planks
+    # Function to create a plank
+    def create_plank(start_idx, angle, offset):
+        rotation_matrix = ti.Matrix([[ti.cos(angle), -ti.sin(angle)], [ti.sin(angle), ti.cos(angle)]])
+        for i in range(particles_per_plank):
+            idx = start_idx + i
+            local_pos = ti.Vector([
+                ti.random() * 0.1 - 0.05,  # Width of the plank, centered at 0
+                ti.random() * 0.01  # Height of the plank, centered at 0
+            ])
+            rotated_pos = rotation_matrix @ local_pos + offset
+            x[idx] = rotated_pos
+            material[idx] = 3
+            v[idx] = [0, 0]
+            F[idx] = ti.Matrix([[1, 0], [0, 1]])
+            Jp[idx] = 1
+            C[idx] = ti.Matrix.zero(float, 2, 2)
 
-
-    # First plank
-    angle1 = 3.141529 / 4  # 30 degrees tilt
-    rotation_matrix1 = ti.Matrix([[ti.cos(angle1), -ti.sin(angle1)], [ti.sin(angle1), ti.cos(angle1)]])
-    offset1 = ti.Vector([0.5, 0.6])  # Position for the first plank
-    for i in range(particles_per_plank):
-        idx = i + n_ball_particles
-        local_pos = ti.Vector([
-            ti.random() * 0.1 - 0.05,  # Width of the plank, centered at 0
-            ti.random() * 0.001  # Height of the plank, centered at 0
-        ])
-        rotated_pos = rotation_matrix1 @ local_pos + offset1
-        x[idx] = rotated_pos
-        material[idx] = 3
-        v[idx] = [0, 0]
-        F[idx] = ti.Matrix([[1, 0], [0, 1]])
-        Jp[idx] = 1
-        C[idx] = ti.Matrix.zero(float, 2, 2)
-
-    # Second plank
-    angle2 = -3.141529 / 3  # -30 degrees tilt
-    rotation_matrix2 = ti.Matrix([[ti.cos(angle2), -ti.sin(angle2)], [ti.sin(angle2), ti.cos(angle2)]])
-    offset2 = ti.Vector([0.2, 0.3])  # Position for the second plank
-    for i in range(particles_per_plank):
-        idx = i + n_ball_particles + particles_per_plank
-        local_pos = ti.Vector([
-            ti.random() * 0.1 - 0.05,
-            ti.random() * 0.001
-        ])
-        rotated_pos = rotation_matrix2 @ local_pos + offset2
-        x[idx] = rotated_pos
-        material[idx] = 3
-        v[idx] = [0, 0]
-        F[idx] = ti.Matrix([[1, 0], [0, 1]])
-        Jp[idx] = 1
-        C[idx] = ti.Matrix.zero(float, 2, 2)
-
-    # Third plank
-    angle3 = 3.141529 / 3  # 45 degrees tilt
-    rotation_matrix3 = ti.Matrix([[ti.cos(angle3), -ti.sin(angle3)], [ti.sin(angle3), ti.cos(angle3)]])
-    offset3 = ti.Vector([0.7, 0.6])  # Position for the third plank
-    for i in range(particles_per_plank):
-        idx = i + n_ball_particles + 2 * particles_per_plank
-        local_pos = ti.Vector([
-            ti.random() * 0.1 - 0.05,
-            ti.random() * 0.001
-        ])
-        rotated_pos = rotation_matrix3 @ local_pos + offset3
-        x[idx] = rotated_pos
-        material[idx] = 3
-        v[idx] = [0, 0]
-        F[idx] = ti.Matrix([[1, 0], [0, 1]])
-        Jp[idx] = 1
-        C[idx] = ti.Matrix.zero(float, 2, 2)
-
-    
-
+    # Create planks
+    create_plank(n_ball_particles, 3.141529 / 4, ti.Vector([0.5, 0.6]))  # First plank
+    create_plank(n_ball_particles + particles_per_plank, -3.141529 / 3, ti.Vector([0.2, 0.3]))  # Second plank
+    create_plank(n_ball_particles + 2 * particles_per_plank, 3.141529 / 3, ti.Vector([0.7, 0.4]))  # Third plank
+    create_plank(n_ball_particles + 3 * particles_per_plank, 3.141529 / 3, ti.Vector([0.7, 0.6]))  # Fourth plank
+    create_plank(n_ball_particles + 4 * particles_per_plank, 3.141529 / 3, ti.Vector([0.4, 0.3]))  # Fifth plank
+    create_plank(n_ball_particles + 5 * particles_per_plank, 0.0, ti.Vector([0.4, 0.5]))  # Bucket
 
 print("[Hint] Use WSAD/arrow keys to control gravity. Use left/right mouse buttons to attract/repel. Press R to reset.")
-gui = ti.GUI("Taichi MLS-MPM-128", res=(768, 768), background_color=0x112F41)
+gui = ti.GUI("Taichi MLS-MPM-128", res=(800, 800), background_color=0x112F41)
 reset()
 gravity[None] = [0, -1]
 
@@ -221,13 +184,4 @@ for frame in range(20000):
         palette=[0x068587, 0xED553B, 0xEEEEF0, 0xFFA500],  # Added a color for the new material
         palette_indices=material,
     )
-
-    # Change to gui.show(f'{frame:06d}.png') to write images to disk
     gui.show()
-
-    # overlay an image over the ball
-    # add more planks
-    # maintain the gravity
-    # modify the planks so the ball falls
-    # extend the boundaries, and adjust
-
